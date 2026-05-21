@@ -1,5 +1,6 @@
 """
-notifier.py - ntfy.sh értesítések küldése
+notifier.py - ntfy értesítések
+Ha NTFY_TOPIC nincs beállítva, csak kiírja a konzolra (nem crashel).
 """
 
 import os
@@ -7,128 +8,101 @@ import requests
 from config import NTFY_BASE_URL
 
 
-def _get_topic() -> str:
-    topic = os.environ.get('NTFY_TOPIC', '')
-    if not topic:
-        raise ValueError("NTFY_TOPIC environment variable nincs beállítva!")
-    return topic
+def _get_topic() -> str | None:
+    """None-t ad vissza ha nincs beállítva — nem dob hibát."""
+    return os.environ.get("NTFY_TOPIC") or None
 
 
 def _get_priority(score: int) -> str:
-    if score >= 90: return 'urgent'
-    if score >= 80: return 'high'
-    return 'default'
+    if score >= 90: return "urgent"
+    if score >= 80: return "high"
+    return "default"
 
 
 def _get_emoji(score: int) -> str:
-    if score >= 90: return '🔥🔥🔥'
-    if score >= 80: return '⭐⭐'
-    return '📊'
+    if score >= 90: return "🔥🔥🔥"
+    if score >= 80: return "⭐⭐"
+    return "📊"
+
+
+def _send(topic: str, title: str, body: str,
+          priority: str = "default", tags: str = "bell") -> bool:
+    try:
+        resp = requests.post(
+            f"{NTFY_BASE_URL}/{topic}",
+            data=body.encode("utf-8"),
+            headers={
+                "Title":    title.encode("utf-8"),
+                "Priority": priority,
+                "Tags":     tags,
+            },
+            timeout=10,
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"  ⚠️  ntfy hiba: {e}")
+        return False
 
 
 def send_buy_alert(card_name: str, score_result: dict) -> bool:
-    """
-    Vételi jelzés küldése ntfy-ra.
-    """
-    topic   = _get_topic()
-    score   = score_result['score']
-    nm      = score_result['nm_price']
-    trend   = score_result['trend']
-    disc    = score_result['discount']
-    pokemon = score_result['pokemon']
-    url     = score_result.get('card_url', '')
+    score   = score_result["score"]
+    nm      = score_result["nm_price"]
+    trend   = score_result["trend"]
+    disc    = score_result["discount"]
+    pokemon = score_result["pokemon"]
+    url     = score_result.get("card_url", "")
 
-    emoji    = _get_emoji(score)
-    priority = _get_priority(score)
-
-    title = f"{emoji} VÉTEL: {card_name} | Score: {score}/100"
-
-    body = (
+    title = f"{_get_emoji(score)} VÉTEL: {card_name} | Score: {score}/100"
+    body  = (
         f"Pokémon: {pokemon}\n"
         f"NM ár (megbízható eladó): €{nm:.2f}\n"
         f"Trend ár: €{trend:.2f}\n"
         f"Kedvezmény: {disc}% a trend alatt\n"
-        f"\nRészletezés:\n"
-        f"  Árkülönbség: +{score_result['breakdown']['base_price_gap']:.0f} pont\n"
-        f"  Karakter bónusz: +{score_result['breakdown']['tier_bonus']} pont\n"
-        f"  Ritkaság bónusz: +{score_result['breakdown']['rarity_bonus']} pont\n"
-        f"  Likviditás: +{score_result['breakdown']['liquidity']} pont\n"
+        f"\nPontok:\n"
+        f"  Ár gap:    +{score_result['breakdown']['base_price_gap']:.0f}\n"
+        f"  Karakter:  +{score_result['breakdown']['tier_bonus']}\n"
+        f"  Ritkaság:  +{score_result['breakdown']['rarity_bonus']}\n"
+        f"  Likviditás:+{score_result['breakdown']['liquidity']}\n"
         f"\n👉 {url}"
     )
 
-    try:
-        resp = requests.post(
-            f"{NTFY_BASE_URL}/{topic}",
-            data=body.encode('utf-8'),
-            headers={
-                'Title':    title.encode('utf-8'),
-                'Priority': priority,
-                'Tags':     'moneybag,pokemon',
-            },
-            timeout=10
-        )
-        return resp.status_code == 200
-    except Exception as e:
-        print(f"Értesítési hiba: {e}")
-        return False
+    topic = _get_topic()
+    if topic:
+        return _send(topic, title, body, _get_priority(score), "moneybag,pokemon")
+    else:
+        print(f"\n{'='*55}")
+        print(f"  {title}")
+        print(body)
+        print(f"{'='*55}\n")
+        return True
 
 
 def send_watchlist_update(new_cards: list[str]) -> bool:
-    """
-    Értesítés új kártyák watchlistre kerülésekor.
-    """
     if not new_cards:
         return True
-
-    topic = _get_topic()
-    title = f"🆕 Watchlist frissítve: {len(new_cards)} új kártya"
+    title = f"🆕 Watchlist: {len(new_cards)} új kártya"
     body  = "Hozzáadva:\n" + "\n".join(f"• {c}" for c in new_cards[:10])
     if len(new_cards) > 10:
-        body += f"\n...és még {len(new_cards)-10} kártya"
+        body += f"\n...és még {len(new_cards)-10}"
 
-    try:
-        resp = requests.post(
-            f"{NTFY_BASE_URL}/{topic}",
-            data=body.encode('utf-8'),
-            headers={
-                'Title':    title.encode('utf-8'),
-                'Priority': 'low',
-                'Tags':     'white_check_mark',
-            },
-            timeout=10
-        )
-        return resp.status_code == 200
-    except Exception as e:
-        print(f"Értesítési hiba: {e}")
-        return False
+    topic = _get_topic()
+    if topic:
+        return _send(topic, title, body, "low", "white_check_mark")
+    else:
+        print(f"\n{title}\n{body}\n")
+        return True
 
 
 def send_daily_summary(checked: int, alerts: int) -> bool:
-    """
-    Napi összefoglaló - csak ha volt eredmény.
-    """
-    topic = _get_topic()
     if alerts > 0:
-        title = f"📈 Napi összefoglaló: {alerts} vételi jelzés"
-        emoji = "🎯"
+        title = f"📈 Összefoglaló: {alerts} vételi jelzés ({checked} kártya)"
     else:
-        title = f"✅ Napi scan kész: {checked} kártya, jelzés nincs"
-        emoji = "😴"
+        title = f"✅ Scan kész: {checked} kártya, jelzés nincs"
+    body = f"{checked} kártya ellenőrizve, {alerts} vételi jelzés"
 
-    body = f"{emoji} {checked} kártya ellenőrizve\n{alerts} vételi jelzés"
-
-    try:
-        resp = requests.post(
-            f"{NTFY_BASE_URL}/{topic}",
-            data=body.encode('utf-8'),
-            headers={
-                'Title':    title.encode('utf-8'),
-                'Priority': 'low' if alerts == 0 else 'default',
-                'Tags':     'bar_chart',
-            },
-            timeout=10
-        )
-        return resp.status_code == 200
-    except Exception as e:
-        print(f"Értesítési hiba: {e}")
-        return False
+    topic = _get_topic()
+    if topic:
+        return _send(topic, title, body, "low", "bar_chart")
+    else:
+        print(f"\n{title}\n")
+        return True
