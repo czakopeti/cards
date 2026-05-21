@@ -1,0 +1,46 @@
+name: 🆕 Heti Watchlist Frissítés
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'   # Minden hétfőn 8:00 UTC (10:00 Budapest)
+  workflow_dispatch:
+
+jobs:
+  update-watchlist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write       # Szükséges a watchlist.json commit-jához
+
+    steps:
+      - name: 📥 Kód letöltése
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🐍 Python 3.11 beállítása
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Függőségek telepítése
+        run: pip install -r requirements.txt
+
+      - name: 🔄 Watchlist frissítése
+        run: python watchlist_manager.py --update
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
+      - name: 💾 Frissített watchlist commitolása
+        run: |
+          git config --local user.email "pokemon-monitor-bot@github.com"
+          git config --local user.name "Pokémon Monitor Bot"
+          git add watchlist.json
+          if git diff --staged --quiet; then
+            echo "Nincs változás a watchlistben"
+          else
+            git commit -m "🤖 Auto-update: watchlist.json [$(date +'%Y-%m-%d')]"
+            git push
+            echo "✅ Watchlist frissítve és feltöltve"
+          fi
